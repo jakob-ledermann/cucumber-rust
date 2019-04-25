@@ -78,6 +78,7 @@ cucumber! {
     steps: &[
         basic::steps
     ],
+    setup_world: ::MyWorld::default,
     setup: setup,
     before: &[before_thing, some_before, something_great],
     after: &[after_thing]

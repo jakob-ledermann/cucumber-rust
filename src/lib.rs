@@ -36,7 +36,7 @@ pub use output::default::DefaultOutput;
 mod panic_trap;
 use panic_trap::{PanicDetails, PanicTrap};
 
-pub trait World: Default {}
+pub trait World {}
 
 #[derive(Debug, Clone)]
 pub struct HashableRegex(pub Regex);
@@ -66,11 +66,11 @@ impl Deref for HashableRegex {
 type TestFn<T> = fn(&mut T, &Step) -> ();
 type TestRegexFn<T> = fn(&mut T, &[String], &Step) -> ();
 
-pub struct TestCase<T: Default> {
+pub struct TestCase<T> {
     pub test: TestFn<T>
 }
 
-impl<T: Default> TestCase<T> {
+impl<T> TestCase<T> {
     pub fn new(test: TestFn<T>) -> TestCase<T> {
         TestCase {
             test: test
@@ -78,12 +78,12 @@ impl<T: Default> TestCase<T> {
     }
 }
 
-pub struct RegexTestCase<'a, T: 'a + Default> {
+pub struct RegexTestCase<'a, T: 'a> {
     pub test: TestRegexFn<T>,
     _marker: std::marker::PhantomData<&'a T>
 }
 
-impl<'a, T: Default> RegexTestCase<'a, T> {
+impl<'a, T> RegexTestCase<'a, T> {
     pub fn new(test: TestRegexFn<T>) -> RegexTestCase<'a, T> {
         RegexTestCase {
             test: test,
@@ -92,20 +92,20 @@ impl<'a, T: Default> RegexTestCase<'a, T> {
     }
 }
 
-pub struct Steps<'s, T: 's + Default> {
+pub struct Steps<'s, T: 's> {
     pub given: HashMap<&'static str, TestCase<T>>,
     pub when: HashMap<&'static str, TestCase<T>>,
     pub then: HashMap<&'static str, TestCase<T>>,
     pub regex: RegexSteps<'s, T>
 }
 
-pub struct RegexSteps<'s, T: 's + Default> {
+pub struct RegexSteps<'s, T: 's> {
     pub given: HashMap<HashableRegex, RegexTestCase<'s, T>>,
     pub when: HashMap<HashableRegex, RegexTestCase<'s, T>>,
     pub then: HashMap<HashableRegex, RegexTestCase<'s, T>>,
 }
 
-pub enum TestCaseType<'a, T> where T: 'a, T: Default {
+pub enum TestCaseType<'a, T> where T: 'a {
     Normal(&'a TestCase<T>),
     Regex(&'a RegexTestCase<'a, T>, Vec<String>)
 }
@@ -118,7 +118,7 @@ pub enum TestResult {
     Fail(PanicDetails, Vec<u8>)
 }
 
-impl<'s, T: Default> Steps<'s, T> {
+impl<'s, T> Steps<'s, T> {
     pub fn new() -> Steps<'s, T> {
         let regex_tests = RegexSteps {
             given: HashMap::new(),
@@ -212,6 +212,7 @@ impl<'s, T: Default> Steps<'s, T> {
         feature: &'a gherkin::Feature,
         rule: Option<&'a gherkin::Rule>,
         scenario: &'a gherkin::Scenario,
+        setup_world_fn: fn() -> T,
         _before_fns: &'a Option<&[fn(&Scenario) -> ()]>,
         after_fns: &'a Option<&[fn(&Scenario) -> ()]>,
         suppress_output: bool,
@@ -222,7 +223,7 @@ impl<'s, T: Default> Steps<'s, T> {
         let mut is_success = true;
 
         let mut world = {
-            let panic_trap = PanicTrap::run(suppress_output, || T::default());
+            let panic_trap = PanicTrap::run(suppress_output, setup_world_fn);
             match panic_trap.result {
                 Ok(v) => v,
                 Err(panic_info) => {
@@ -299,6 +300,7 @@ impl<'s, T: Default> Steps<'s, T> {
         feature: &'a gherkin::Feature,
         rule: Option<&'a gherkin::Rule>,
         scenarios: &[gherkin::Scenario],
+        setup_world_fn: fn() -> T,
         before_fns: Option<&[fn(&Scenario) -> ()]>,
         after_fns: Option<&[fn(&Scenario) -> ()]>,
         options: &cli::CliOptions,
@@ -324,7 +326,7 @@ impl<'s, T: Default> Steps<'s, T> {
                 }
             }
 
-            if !self.run_scenario(&feature, rule, &scenario, &before_fns, &after_fns, options.suppress_output, output) {
+            if !self.run_scenario(&feature, rule, &scenario, setup_world_fn,&before_fns, &after_fns, options.suppress_output, output) {
                 is_success = false;
             }
         }
@@ -335,6 +337,7 @@ impl<'s, T: Default> Steps<'s, T> {
     pub fn run<'a>(
         &'s self,
         feature_files: Vec<PathBuf>,
+        setup_world_fn: fn() -> T,
         before_fns: Option<&[fn(&Scenario) -> ()]>,
         after_fns: Option<&[fn(&Scenario) -> ()]>,
         options: cli::CliOptions,
@@ -359,13 +362,13 @@ impl<'s, T: Default> Steps<'s, T> {
             };
 
             output.visit_feature(&feature, &path);
-            if !self.run_scenarios(&feature, None, &feature.scenarios, before_fns, after_fns, &options, output) {
+            if !self.run_scenarios(&feature, None, &feature.scenarios, setup_world_fn, before_fns, after_fns, &options, output) {
                 is_success = false;
             }
 
             for rule in &feature.rules {
                 output.visit_rule(&rule);
-                if !self.run_scenarios(&feature, Some(&rule), &rule.scenarios, before_fns, after_fns, &options, output) {
+                if !self.run_scenarios(&feature, Some(&rule), &rule.scenarios, setup_world_fn, before_fns, after_fns, &options, output) {
                     is_success = false;
                 }
                 output.visit_rule_end(&rule);
@@ -447,80 +450,88 @@ macro_rules! cucumber {
         features: $featurepath:tt,
         world: $worldtype:path,
         steps: $vec:expr,
+        setup_world: $setup_world_fn:expr,
         setup: $setupfn:expr,
         before: $beforefns:expr,
         after: $afterfns:expr
     ) => {
-        cucumber!(@finish; $featurepath; $worldtype; $vec; Some($setupfn); Some($beforefns); Some($afterfns));
+        cucumber!(@finish; $featurepath; $worldtype; $vec; $setup_world_fn; Some($setupfn); Some($beforefns); Some($afterfns));
     };
 
     (
         features: $featurepath:tt,
         world: $worldtype:path,
         steps: $vec:expr,
+        setup_world: $setup_world_fn:expr,
         setup: $setupfn:expr,
         before: $beforefns:expr
     ) => {
-        cucumber!(@finish; $featurepath; $worldtype; $vec; Some($setupfn); Some($beforefns); None);
+        cucumber!(@finish; $featurepath; $worldtype; $vec; $setup_world_fn; Some($setupfn); Some($beforefns); None);
     };
 
         (
         features: $featurepath:tt,
         world: $worldtype:path,
         steps: $vec:expr,
+        setup_world: $setup_world_fn:expr,
         setup: $setupfn:expr,
         after: $afterfns:expr
     ) => {
-        cucumber!(@finish; $featurepath; $worldtype; $vec; Some($setupfn); None; Some($afterfns));
+        cucumber!(@finish; $featurepath; $worldtype; $vec; $setup_world_fn; Some($setupfn); None; Some($afterfns));
     };
 
     (
         features: $featurepath:tt,
         world: $worldtype:path,
         steps: $vec:expr,
+        setup_world: $setup_world_fn:expr,
         before: $beforefns:expr,
         after: $afterfns:expr
     ) => {
-        cucumber!(@finish; $featurepath; $worldtype; $vec; None; Some($beforefns); Some($afterfns));
+        cucumber!(@finish; $featurepath; $worldtype; $vec; $setup_world_fn; None; Some($beforefns); Some($afterfns));
     };
 
     (
         features: $featurepath:tt,
         world: $worldtype:path,
         steps: $vec:expr,
+        setup_world: $setup_world_fn:expr,
         before: $beforefns:expr
     ) => {
-        cucumber!(@finish; $featurepath; $worldtype; $vec; None; Some($beforefns); None);
+        cucumber!(@finish; $featurepath; $worldtype; $vec; $setup_world_fn; None; Some($beforefns); None);
     };
 
     (
         features: $featurepath:tt,
         world: $worldtype:path,
         steps: $vec:expr,
+        setup_world: $setup_world_fn:expr,
         after: $afterfns:expr
     ) => {
-        cucumber!(@finish; $featurepath; $worldtype; $vec; None; None; Some($afterfns));
+        cucumber!(@finish; $featurepath; $worldtype; $vec; $setup_world_fn; None; None; Some($afterfns));
     };
 
     (
         features: $featurepath:tt,
         world: $worldtype:path,
         steps: $vec:expr,
+        setup_world: $setup_world_fn:expr,
         setup: $setupfn:expr
     ) => {
-        cucumber!(@finish; $featurepath; $worldtype; $vec; Some($setupfn); None; None);
+        cucumber!(@finish; $featurepath; $worldtype; $vec; $setup_world_fn; Some($setupfn); None; None);
     };
 
     (
         features: $featurepath:tt,
         world: $worldtype:path,
+        setup_world: $setup_world_fn:expr,
         steps: $vec:expr
     ) => {
-        cucumber!(@finish; $featurepath; $worldtype; $vec; None; None; None);
+        cucumber!(@finish; $featurepath; $worldtype; $vec; $setup_world_fn; None; None; None);
     };
 
     (
-        @finish; $featurepath:tt; $worldtype:path; $vec:expr; $setupfn:expr; $beforefns:expr; $afterfns:expr
+        @finish; $featurepath:tt; $worldtype:path; $vec:expr; $setup_world_fn:expr; $setupfn:expr; $beforefns:expr; $afterfns:expr
     ) => {
         #[allow(unused_imports)]
         fn main() {
@@ -578,6 +589,7 @@ macro_rules! cucumber {
             
             let mut output = DefaultOutput::default();
 
+            let setup_world_fn: fn() -> $worldtype = $setup_world_fn;
             let setup_fn: Option<fn() -> ()> = $setupfn;
             let before_fns: Option<&[fn(&Scenario) -> ()]> = $beforefns;
             let after_fns: Option<&[fn(&Scenario) -> ()]> = $afterfns;
@@ -587,7 +599,7 @@ macro_rules! cucumber {
                 None => {}
             };
 
-            if !tests.run(feature_files, before_fns, after_fns, options, &mut output) {
+            if !tests.run(feature_files, setup_world_fn, before_fns, after_fns, options, &mut output) {
                 process::exit(1);
             }
         }
