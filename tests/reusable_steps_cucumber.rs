@@ -1,21 +1,46 @@
 #[macro_use]
 extern crate cucumber_rust;
 
-use std::default::Default;
+use std::cmp::PartialOrd;
+use std::clone::Clone;
+
+pub trait Sorter {
+    fn sort(&self, source: &[i64]) -> Box<[i64]>;
+}
+
+pub struct SortedCopy {}
+
+impl Sorter for SortedCopy {
+    fn sort(&self, source: &[i64]) -> Box<[i64]>
+    {
+        let mut res = Vec::new();
+        for outer in 0..source.len() {
+            let mut found = false;
+            for inner in 1..res.len() {
+                if res[inner - 1] <= source[outer] &&
+                    res[inner] > source[outer]
+                {
+                    res.insert(inner, source[outer]);
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found
+            {
+                res.push(source[outer]);
+            }
+        }
+
+        res.into_boxed_slice()
+    }
+}
 
 pub struct MyWorld {
-    pub thing: bool
+    pub thing: Box<Sorter>
 }
 
 impl cucumber_rust::World for MyWorld {}
-
-impl Default for MyWorld {
-    fn default() -> MyWorld {
-        MyWorld {
-            thing: false
-        }
-    }
-}
 
 #[cfg(test)]
 mod basic {
@@ -23,7 +48,7 @@ mod basic {
         when regex "thing (\\d+)" (usize) |world, sz, step| {
 
         };
-        
+
         when regex "^test (.*) regex$" |_world, matches, _step| {
             println!("{}", matches[1]);
         };
@@ -36,7 +61,7 @@ mod basic {
             assert!(false);
         };
 
-        when "something goes right" |_world, _step| { 
+        when "something goes right" |_world, _step| {
             assert!(true);
         };
 
@@ -72,13 +97,21 @@ fn setup() {
 
 }
 
+fn setup_world() -> MyWorld {
+    let system = SortedCopy {};
+
+    MyWorld{
+        thing: Box::new(system),
+    }
+}
+
 cucumber! {
-    features: "./features/reusable",
+    features: "./features",
     world: ::MyWorld,
     steps: &[
         basic::steps
     ],
-    setup_world: ::MyWorld::default,
+    setup_world: setup_world,
     setup: setup,
     before: &[before_thing, some_before, something_great],
     after: &[after_thing]
